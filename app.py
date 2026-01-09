@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 # ---------------- CONFIGURACIÓN ----------------
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
-ACCESS_TOKEN = "EAAMDNH8HasoBQYIsj583pLdMIKpi2hAc6g3aITtlPtyOLCOj0GOFJ4cbP8bviV0oAlzZCE5aZAhFcglLe9cHwbjmOTlJj1whT0dgQz2cG5kCP1YpmvgUA2ZAjyhuKky93rKAwqA9RlMbaHCrZB4B5u4oZChelaS2T2yiKNqNVlsAyxuzXBThL8gPmh56S3VprHHVBY5GFR2kMSJkkmffxJYcMXyiOZCMRf6NlIOOU1tdzaZBsDdZAqjxjyMIzaLapwo5FaXy4ojG4ajSnBytm8uq"
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
 NUMERO_PERSONAL = "+543886046052"  # tu número personal en formato internacional
 PEDIDOS_FILE = "pedidos.json"
@@ -280,3 +280,4 @@ def responder():
 # ---------------- EJECUCIÓN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
