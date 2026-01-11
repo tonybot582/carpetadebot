@@ -177,10 +177,10 @@ def webhook():
         if estado == "INICIO":
             enviar(telefono,
                 "💎 Diamantes Free Fire\n\n"
-                "1️⃣ 100 – Diamantes - $51.200\n"
-                "2️⃣ 310 – $3.200\n"
-                "3️⃣ 520 – $5.000\n"
-                "4️⃣ 1060 – $9.800")
+                "1️⃣ 100  – 💎 - $1.200\n"
+                "2️⃣ 310  – 💎 - $3.200\n"
+                "3️⃣ 520  – 💎 - $5.000\n"
+                "4️⃣ 1060 – 💎 - $9.800")
             usuarios[telefono]["estado"] = "MENU"
 
         elif estado == "MENU" and texto in PAQUETES:
@@ -190,11 +190,11 @@ def webhook():
 
         elif estado == "ID":
             usuarios[telefono].update({"estado":"CONFIRMAR","id_juego":texto})
-            enviar(telefono, "Confirmá escribiendo SI")
+            enviar(telefono, "Confirmá tu ID escribiendo SI")
 
         elif estado == "CONFIRMAR" and texto == "si":
             usuarios[telefono]["estado"] = "COMPROBANTE"
-            enviar(telefono, "📎 Enviá el comprobante")
+            enviar(telefono, "📎 Enviá el comprobante de pago realizado")
 
         elif estado == "COMPROBANTE":
             tipo = msg.get("type")
@@ -214,7 +214,7 @@ def webhook():
                 "comprobante":pedido,
                 "mensajes_humanos":[]
             }
-            enviar(telefono, "✅ Comprobante recibido")
+            enviar(telefono, "✅ Comprobante recibido en un momento recibiras tu carga de 💎DIAMANTES💎")
 
         guardar_usuarios()
 
