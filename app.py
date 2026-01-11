@@ -105,7 +105,7 @@ button { margin-top:5px; }
 </style>
 </head>
 <body>
-<h2>Panel de Atención Humana</h2>
+<h2>MENSAJES DE CLIENTES</h2>
 
 {% for tel, data in usuarios.items() %}
 {% if data.estado in ['HUMANO','TOMADO'] %}
