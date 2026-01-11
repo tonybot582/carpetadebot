@@ -10,7 +10,7 @@ app = Flask(__name__)
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
-NUMERO_PERSONAL = "543886046052"  # SIN +
+NUMERO_PERSONAL = "543886046052"
 
 PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
@@ -50,7 +50,6 @@ def enviar(telefono, texto):
     }
     requests.post(url, json=payload, headers=headers)
 
-# 🔹 NUEVO: botón volver al menú
 def enviar_boton_menu(telefono):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -79,6 +78,86 @@ def enviar_boton_menu(telefono):
     }
     requests.post(url, json=payload, headers=headers)
 
+def enviar_imagen(telefono, media_id):
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "image",
+        "image": {"id": media_id}
+    }
+    requests.post(url, json=payload, headers=headers)
+
+def obtener_url_media(media_id):
+    url = f"https://graph.facebook.com/v18.0/{media_id}"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    r = requests.get(url, headers=headers)
+    return r.json().get("url")
+
+# ---------------- PANEL HUMANO ----------------
+PANEL_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>Panel Humano</title>
+<style>
+body { font-family: Arial; background:#f0f2f5; padding:20px; }
+.cliente { background:#fff; padding:15px; margin-bottom:20px; border-radius:12px; }
+.mensajes { max-height:200px; overflow:auto; background:#fafafa; padding:10px; border-radius:8px; }
+button { margin-top:5px; }
+</style>
+</head>
+<body>
+<h2>MENSAJES DE CLIENTES</h2>
+
+{% for tel, data in usuarios.items() %}
+{% if data.estado in ['HUMANO','TOMADO'] %}
+<div class="cliente">
+<h3>{{ tel }} - {{ data.estado }}</h3>
+
+<div class="mensajes">
+{% for m in data.get('mensajes_humanos', []) %}
+<div>{{ m }}</div>
+{% endfor %}
+</div>
+
+{% if data.get('comprobante') %}
+<p><strong>Comprobante:</strong></p>
+<img src="/media/{{ data.comprobante.media_id }}" width="200">
+{% endif %}
+
+{% if data.estado == 'HUMANO' %}
+<form action="/tomar" method="post">
+<input type="hidden" name="telefono" value="{{ tel }}">
+<button>🧑‍💼 Tomar conversación</button>
+</form>
+{% endif %}
+
+{% if data.estado == 'TOMADO' %}
+<form action="/responder" method="post">
+<input type="hidden" name="telefono" value="{{ tel }}">
+<input name="mensaje" placeholder="Responder">
+<button>Enviar</button>
+</form>
+{% endif %}
+</div>
+{% endif %}
+{% endfor %}
+</body>
+</html>
+"""
+
+# ---------------- MEDIA ----------------
+@app.route("/media/<media_id>")
+def media(media_id):
+    url = obtener_url_media(media_id)
+    r = requests.get(url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}"})
+    return send_file(BytesIO(r.content), mimetype=r.headers.get("Content-Type"))
+
 # ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
@@ -96,13 +175,13 @@ def webhook():
         texto = msg.get("text", {}).get("body", "").strip()
         boton_id = None
 
-        if msg.get("type") == "interactive":
+        if msg["type"] == "interactive":
             boton_id = msg["interactive"]["button_reply"]["id"]
 
         usuarios.setdefault(telefono, {"estado": "INICIO"})
         estado = usuarios[telefono]["estado"]
 
-        # 🔹 BOTÓN GLOBAL: volver al menú
+        # 🔙 BOTÓN GLOBAL
         if boton_id == "VOLVER_MENU":
             usuarios[telefono]["estado"] = "MENU"
             enviar(
@@ -116,7 +195,7 @@ def webhook():
             guardar_usuarios()
             return "EVENT_RECEIVED", 200
 
-        # -------- TU LÓGICA ORIGINAL (NO TOCADA) --------
+        # -------- FLUJO ORIGINAL --------
         if estado == "INICIO":
             enviar(
                 telefono,
@@ -165,6 +244,27 @@ def webhook():
         print("ERROR:", e)
 
     return "EVENT_RECEIVED", 200
+
+# ---------------- PANEL ----------------
+@app.route("/panel")
+def panel():
+    return render_template_string(PANEL_HTML, usuarios=usuarios)
+
+@app.route("/tomar", methods=["POST"])
+def tomar():
+    tel = request.form["telefono"]
+    usuarios[tel]["estado"] = "TOMADO"
+    guardar_usuarios()
+    return redirect("/panel")
+
+@app.route("/responder", methods=["POST"])
+def responder():
+    tel = request.form["telefono"]
+    msg = request.form["mensaje"]
+    enviar(tel, msg)
+    usuarios[tel]["mensajes_humanos"].append(f"Tú: {msg}")
+    guardar_usuarios()
+    return redirect("/panel")
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
