@@ -16,7 +16,7 @@ PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
 
 PAQUETES = {
-    "1": ("100 diamantes", "$1.200 ARS"),
+    "1": ("100 diamantes", "$3400 ARS"),
     "2": ("310 diamantes", "$3.200 ARS"),
     "3": ("520 diamantes", "$5.000 ARS"),
     "4": ("1060 diamantes", "$9.800 ARS")
@@ -226,6 +226,7 @@ def responder():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 
 
 
