@@ -1,152 +1,206 @@
 from flask import Flask, request, render_template_string, redirect, send_file
-import requests, json, os
+import requests
+import json
+import os
 from io import BytesIO
 
 app = Flask(__name__)
 
-# ---------- CONFIG ----------
+# ---------------- CONFIG ----------------
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
 NUMERO_PERSONAL = "543886046052"
 
+PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
 
 PAQUETES = {
-    "p1": ("100 Diamantes", "$1.200"),
-    "p2": ("310 Diamantes", "$3.200"),
-    "p3": ("520 Diamantes", "$5.000"),
-    "p4": ("1060 Diamantes", "$9.800"),
+    "p1": ("100 diamantes", "$1.200 ARS"),
+    "p2": ("310 diamantes", "$3.200 ARS"),
+    "p3": ("520 diamantes", "$5.000 ARS"),
+    "p4": ("1060 diamantes", "$9.800 ARS")
 }
 
-# ---------- PERSISTENCIA ----------
+# ---------------- PERSISTENCIA ----------------
 def cargar_usuarios():
     if os.path.exists(USUARIOS_FILE):
-        return json.load(open(USUARIOS_FILE))
+        with open(USUARIOS_FILE, "r") as f:
+            return json.load(f)
     return {}
 
 def guardar_usuarios():
-    json.dump(usuarios, open(USUARIOS_FILE, "w"), indent=4)
+    with open(USUARIOS_FILE, "w") as f:
+        json.dump(usuarios, f, indent=4)
 
 usuarios = cargar_usuarios()
 
-# ---------- WHATSAPP ----------
-URL = f"https://graph.facebook.com/v19.0/{PHONE_NUMBER_ID}/messages"
-HEADERS = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
-
-def enviar_texto(tel, texto):
-    requests.post(URL, headers=HEADERS, json={
-        "messaging_product": "whatsapp",
-        "to": tel,
-        "type": "text",
-        "text": {"body": texto}
-    })
-
-def enviar_botones(tel, texto, botones):
-    requests.post(URL, headers=HEADERS, json={
-        "messaging_product": "whatsapp",
-        "to": tel,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": texto},
-            "action": {"buttons": botones}
+# ---------------- WHATSAPP HELPERS ----------------
+def enviar_texto(telefono, texto):
+    requests.post(
+        f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": telefono,
+            "type": "text",
+            "text": {"body": texto}
         }
-    })
+    )
 
-def enviar_imagen(tel, media_id):
-    requests.post(URL, headers=HEADERS, json={
-        "messaging_product": "whatsapp",
-        "to": tel,
-        "type": "image",
-        "image": {"id": media_id}
-    })
+def enviar_botones(telefono, texto, botones):
+    requests.post(
+        f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": telefono,
+            "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": texto},
+                "action": {
+                    "buttons": [
+                        {
+                            "type": "reply",
+                            "reply": {"id": b["id"], "title": b["title"]}
+                        } for b in botones
+                    ]
+                }
+            }
+        }
+    )
 
-# ---------- WEBHOOK ----------
-@app.route("/webhook", methods=["GET","POST"])
+def enviar_imagen(telefono, media_id):
+    requests.post(
+        f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages",
+        headers={
+            "Authorization": f"Bearer {ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        },
+        json={
+            "messaging_product": "whatsapp",
+            "to": telefono,
+            "type": "image",
+            "image": {"id": media_id}
+        }
+    )
+
+# ---------------- WEBHOOK ----------------
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
-            return request.args.get("hub.challenge")
+            return request.args.get("hub.challenge"), 200
         return "Forbidden", 403
 
-    data = request.json
-
-    # ✅ FILTRO CRÍTICO
-    if not data.get("entry"):
-        return "EVENT_RECEIVED", 200
+    data = request.get_json()
 
     try:
-        value = data["entry"][0]["changes"][0]["value"]
-        if "messages" not in value:
-            return "EVENT_RECEIVED", 200
-
-        msg = value["messages"][0]
-        tel = msg["from"]
+        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
+        telefono = msg["from"]
         tipo = msg["type"]
 
-        texto = msg.get("text", {}).get("body", "").strip()
-        boton = msg.get("interactive", {}).get("button_reply", {}).get("id")
+        texto = ""
+        boton_id = None
 
-        if tel not in usuarios:
-            usuarios[tel] = {"estado": "MENU"}
+        if tipo == "text":
+            texto = msg["text"]["body"].strip()
+        elif tipo == "interactive":
+            boton_id = msg["interactive"]["button_reply"]["id"]
 
-        estado = usuarios[tel]["estado"]
+        usuarios.setdefault(telefono, {"estado": "INICIO"})
+        estado = usuarios[telefono]["estado"]
 
-        # ---------- MENU ----------
-        if estado == "MENU":
-            usuarios[tel]["estado"] = "ELEGIR_PAQUETE"
-            enviar_botones(tel, "💎 Elegí un paquete", [
-                {"type":"reply","reply":{"id":"p1","title":"100 💎 $1200"}},
-                {"type":"reply","reply":{"id":"p2","title":"310 💎 $3200"}},
-                {"type":"reply","reply":{"id":"p3","title":"520 💎 $5000"}},
-                {"type":"reply","reply":{"id":"p4","title":"1060 💎 $9800"}},
-            ])
-
-        # ---------- PAQUETE ----------
-        elif estado == "ELEGIR_PAQUETE" and boton in PAQUETES:
-            p, pr = PAQUETES[boton]
-            usuarios[tel].update({"paquete":p,"precio":pr,"estado":"PEDIR_ID"})
-            enviar_texto(tel, f"💎 Elegiste {p} ({pr})\n🎮 Enviá tu ID del juego")
-
-        # ---------- ID ----------
-        elif estado == "PEDIR_ID" and texto:
-            usuarios[tel]["id_juego"] = texto
-            usuarios[tel]["estado"] = "CONFIRMAR_ID"
-            enviar_botones(tel, f"🎮 ID ingresado:\n{text}", [
-                {"type":"reply","reply":{"id":"ok_id","title":"✅ Confirmar"}},
-                {"type":"reply","reply":{"id":"cambiar","title":"🔁 Cambiar"}}
-            ])
-
-        # ---------- CONFIRMAR ID ----------
-        elif estado == "CONFIRMAR_ID":
-            if boton == "ok_id":
-                usuarios[tel]["estado"] = "COMPROBANTE"
-                enviar_texto(
-                    tel,
-                    f"📋 RESUMEN\n"
-                    f"💎 {usuarios[tel]['paquete']}\n"
-                    f"💰 {usuarios[tel]['precio']}\n"
-                    f"🎮 {usuarios[tel]['id_juego']}\n\n"
-                    "📎 Enviá el comprobante"
-                )
-            elif boton == "cambiar":
-                usuarios[tel]["estado"] = "PEDIR_ID"
-                enviar_texto(tel, "🎮 Enviá nuevamente tu ID")
-
-        # ---------- COMPROBANTE ----------
-        elif estado == "COMPROBANTE":
-            media_id = msg.get(tipo, {}).get("id")
-            enviar_texto(NUMERO_PERSONAL,
-                f"📦 NUEVO PEDIDO\nCliente: {tel}\n"
-                f"{usuarios[tel]['paquete']} - {usuarios[tel]['precio']}\n"
-                f"ID: {usuarios[tel]['id_juego']}"
+        # ---------------- INICIO ----------------
+        if estado == "INICIO":
+            enviar_botones(
+                telefono,
+                "💎 Elegí un paquete de diamantes",
+                [
+                    {"id": "p1", "title": "100 💎"},
+                    {"id": "p2", "title": "310 💎"},
+                    {"id": "p3", "title": "520 💎"},
+                ]
             )
-            if media_id:
-                enviar_imagen(NUMERO_PERSONAL, media_id)
+            usuarios[telefono]["estado"] = "MENU"
 
-            usuarios[tel]["estado"] = "HUMANO"
-            enviar_texto(tel, "✅ Pedido recibido. Un asesor te escribe.")
+        # ---------------- MENU ----------------
+        elif estado == "MENU" and boton_id in PAQUETES:
+            p, pr = PAQUETES[boton_id]
+            usuarios[telefono].update({
+                "paquete": p,
+                "precio": pr,
+                "estado": "CONFIRMAR_PAQUETE"
+            })
+
+            enviar_botones(
+                telefono,
+                f"💎 {p}\n💰 {pr}\n\n¿Confirmás el paquete?",
+                [
+                    {"id": "confirmar_paquete", "title": "✅ Confirmar"},
+                    {"id": "volver_menu", "title": "🔁 Volver"}
+                ]
+            )
+
+        # ---------------- CONFIRMAR PAQUETE ----------------
+        elif estado == "CONFIRMAR_PAQUETE":
+            if boton_id == "confirmar_paquete":
+                usuarios[telefono]["estado"] = "ID"
+                enviar_texto(telefono, "📲 Enviá tu ID del juego")
+            elif boton_id == "volver_menu":
+                usuarios[telefono]["estado"] = "INICIO"
+                return webhook()
+
+        # ---------------- ID ----------------
+        elif estado == "ID" and texto:
+            usuarios[telefono]["id_juego"] = texto
+            usuarios[telefono]["estado"] = "CONFIRMAR_ID"
+
+            enviar_botones(
+                telefono,
+                f"🎮 ID ingresado:\n{text}\n\n¿Es correcto?",
+                [
+                    {"id": "confirmar_id", "title": "✅ Confirmar"},
+                    {"id": "volver_menu", "title": "🔁 Volver"}
+                ]
+            )
+
+        # ---------------- CONFIRMAR ID ----------------
+        elif estado == "CONFIRMAR_ID":
+            if boton_id == "confirmar_id":
+                usuarios[telefono]["estado"] = "RESUMEN"
+                enviar_botones(
+                    telefono,
+                    f"📋 RESUMEN FINAL\n\n"
+                    f"💎 {usuarios[telefono]['paquete']}\n"
+                    f"💰 {usuarios[telefono]['precio']}\n"
+                    f"🎮 {usuarios[telefono]['id_juego']}",
+                    [
+                        {"id": "pagar", "title": "💳 Pagar"},
+                        {"id": "volver_menu", "title": "🔁 Cancelar"}
+                    ]
+                )
+
+        # ---------------- RESUMEN ----------------
+        elif estado == "RESUMEN" and boton_id == "pagar":
+            usuarios[telefono]["estado"] = "COMPROBANTE"
+            enviar_texto(telefono, "📎 Enviá el comprobante de pago")
+
+        # ---------------- COMPROBANTE ----------------
+        elif estado == "COMPROBANTE" and tipo in ["image", "document"]:
+            media_id = msg[tipo]["id"]
+
+            enviar_texto(telefono, "✅ Comprobante recibido, un asesor continuará tu pedido 💎")
+            enviar_imagen(NUMERO_PERSONAL, media_id)
+
+            usuarios[telefono]["estado"] = "HUMANO"
 
         guardar_usuarios()
 
@@ -155,6 +209,6 @@ def webhook():
 
     return "EVENT_RECEIVED", 200
 
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
-
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
