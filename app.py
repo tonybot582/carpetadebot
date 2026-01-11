@@ -177,7 +177,7 @@ def webhook():
         if estado == "INICIO":
             enviar(telefono,
                 "💎 Diamantes Free Fire\n\n"
-                "1️⃣ 100 – $51.200\n"
+                "1️⃣ 100 – Diamantes - $51.200\n"
                 "2️⃣ 310 – $3.200\n"
                 "3️⃣ 520 – $5.000\n"
                 "4️⃣ 1060 – $9.800")
