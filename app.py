@@ -10,7 +10,7 @@ app = Flask(__name__)
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
-NUMERO_PERSONAL = "543886046052"
+NUMERO_PERSONAL = "543886046052"  # SIN +
 
 PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
@@ -50,34 +50,6 @@ def enviar(telefono, texto):
     }
     requests.post(url, json=payload, headers=headers)
 
-def enviar_boton_menu(telefono):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": telefono,
-        "type": "interactive",
-        "interactive": {
-            "type": "button",
-            "body": {"text": "¿Querés volver al menú?"},
-            "action": {
-                "buttons": [
-                    {
-                        "type": "reply",
-                        "reply": {
-                            "id": "VOLVER_MENU",
-                            "title": "🔙 Volver al menú"
-                        }
-                    }
-                ]
-            }
-        }
-    }
-    requests.post(url, json=payload, headers=headers)
-
 def enviar_imagen(telefono, media_id):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -98,7 +70,28 @@ def obtener_url_media(media_id):
     r = requests.get(url, headers=headers)
     return r.json().get("url")
 
-# ---------------- PANEL HUMANO ----------------
+def guardar_pedido(pedido):
+    pedidos = []
+    if os.path.exists(PEDIDOS_FILE):
+        with open(PEDIDOS_FILE, "r") as f:
+            pedidos = json.load(f)
+    pedidos.append(pedido)
+    with open(PEDIDOS_FILE, "w") as f:
+        json.dump(pedidos, f, indent=4)
+
+def reenviar_a_personal(cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None):
+    enviar(
+        NUMERO_PERSONAL,
+        f"📦 NUEVO PEDIDO\n\n"
+        f"Cliente: {cliente}\n"
+        f"💎 {paquete}\n"
+        f"💰 {precio}\n"
+        f"🎮 ID: {id_juego}"
+    )
+    if media_id:
+        enviar_imagen(NUMERO_PERSONAL, media_id)
+
+# ---------------- PANEL HTML ----------------
 PANEL_HTML = """
 <!DOCTYPE html>
 <html>
@@ -167,35 +160,22 @@ def webhook():
         return "Forbidden", 403
 
     data = request.get_json()
-
     try:
         msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
         telefono = msg["from"]
 
-        texto = msg.get("text", {}).get("body", "").strip()
-        boton_id = None
-
-        if msg["type"] == "interactive":
-            boton_id = msg["interactive"]["button_reply"]["id"]
+        texto = msg.get("text", {}).get("body", "")
+        texto = texto.strip()
+        texto_l = texto.lower()
 
         usuarios.setdefault(telefono, {"estado": "INICIO"})
         estado = usuarios[telefono]["estado"]
 
-        # 🔙 BOTÓN GLOBAL
-        if boton_id == "VOLVER_MENU":
-            usuarios[telefono]["estado"] = "MENU"
-            enviar(
-                telefono,
-                "💎 Diamantes Free Fire\n\n"
-                "1️⃣ 100  – $1.200\n"
-                "2️⃣ 310  – $3.200\n"
-                "3️⃣ 520  – $5.000\n"
-                "4️⃣ 1060 – $9.800"
-            )
+        if estado == "TOMADO":
+            usuarios[telefono].setdefault("mensajes_humanos", []).append(f"Cliente: {texto}")
             guardar_usuarios()
             return "EVENT_RECEIVED", 200
 
-        # -------- FLUJO ORIGINAL --------
         if estado == "INICIO":
             enviar(
                 telefono,
@@ -207,8 +187,8 @@ def webhook():
             )
             usuarios[telefono]["estado"] = "MENU"
 
-        elif estado == "MENU" and texto in PAQUETES:
-            p, pr = PAQUETES[texto]
+        elif estado == "MENU" and texto_l in PAQUETES:
+            p, pr = PAQUETES[texto_l]
             usuarios[telefono].update({"estado": "CONFIRMAR_PAQUETE", "paquete": p, "precio": pr})
             enviar(
                 telefono,
@@ -216,27 +196,113 @@ def webhook():
                 "1️⃣ Confirmar paquete\n"
                 "2️⃣ Volver al menú"
             )
-            enviar_boton_menu(telefono)
 
         elif estado == "CONFIRMAR_PAQUETE":
-            if texto == "1":
+            if texto_l == "1":
                 usuarios[telefono]["estado"] = "ID"
                 enviar(telefono, "📲 Enviá tu ID del juego")
-                enviar_boton_menu(telefono)
-
-            elif texto == "2":
+            elif texto_l == "2":
                 usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
 
-        elif estado == "ID" and texto:
+        elif estado == "ID":
+            if not texto:
+                enviar(telefono, "❌ El ID no puede estar vacío. Enviá tu ID del juego")
+                return "EVENT_RECEIVED", 200
+
             usuarios[telefono]["id_juego"] = texto
             usuarios[telefono]["estado"] = "CONFIRMAR_ID"
             enviar(
                 telefono,
-                f"🎮 Tu ID es:\n{text}\n\n"
+                f"🎮 Tu ID es:\n👉 {texto}\n\n"
                 "1️⃣ Confirmar ID\n"
                 "2️⃣ Volver al menú"
             )
-            enviar_boton_menu(telefono)
+
+        elif estado == "CONFIRMAR_ID":
+            if texto_l == "1":
+                usuarios[telefono]["estado"] = "RESUMEN"
+                enviar(
+                    telefono,
+                    f"📋 RESUMEN DEL PEDIDO\n\n"
+                    f"💎 {usuarios[telefono]['paquete']}\n"
+                    f"💰 {usuarios[telefono]['precio']}\n"
+                    f"🎮 ID: {usuarios[telefono]['id_juego']}\n\n"
+                    "1️⃣ Confirmar y pagar\n"
+                    "2️⃣ Volver al menú"
+                )
+            elif texto_l == "2":
+                usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
+
+        elif estado == "RESUMEN":
+            if texto_l == "1":
+                usuarios[telefono]["estado"] = "COMPROBANTE"
+                enviar(telefono, "💳 Realizá el pago y enviá el comprobante 📎")
+            elif texto_l == "2":
+                usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
+
+        elif estado == "COMPROBANTE":
+            tipo = msg.get("type")
+            if tipo not in ["image", "document"]:
+                enviar(telefono, "❌ Enviá una imagen del comprobante")
+                return "EVENT_RECEIVED", 200
+
+            media_id = msg[tipo]["id"]
+            pedido = {
+                "cliente": telefono,
+                "paquete": usuarios[telefono]["paquete"],
+                "precio": usuarios[telefono]["precio"],
+                "id_juego": usuarios[telefono]["id_juego"],
+                "media_id": media_id,
+                "tipo": tipo
+            }
+
+            guardar_pedido(pedido)
+            reenviar_a_personal(
+                telefono,
+                pedido["paquete"],
+                pedido["precio"],
+                pedido["id_juego"],
+                tipo,
+                media_id
+            )
+
+            usuarios[telefono] = {
+                "estado": "HUMANO",
+                "comprobante": pedido,
+                "mensajes_humanos": []
+            }
+
+            enviar(telefono, "✅ Comprobante recibido. Un asesor continuará tu pedido 💎")
 
         guardar_usuarios()
 
