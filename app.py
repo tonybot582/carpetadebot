@@ -16,8 +16,8 @@ PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
 
 PAQUETES = {
-    "1": ("100 diamantes", "$5.200 ARS"),
-    "2": ("310 diamantes", "$88.200 ARS"),
+    "1": ("100 diamantes", "$1.200 ARS"),
+    "2": ("310 diamantes", "$3.200 ARS"),
     "3": ("520 diamantes", "$5.000 ARS"),
     "4": ("1060 diamantes", "$9.800 ARS")
 }
@@ -35,7 +35,7 @@ def guardar_usuarios():
 
 usuarios = cargar_usuarios()
 
-# ---------------- ENVÍO WHATSAPP ----------------
+# ---------------- WHATSAPP ----------------
 def enviar(telefono, texto):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -82,7 +82,7 @@ def guardar_pedido(pedido):
 def reenviar_a_personal(cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None):
     enviar(
         NUMERO_PERSONAL,
-        f"📦 NUEVO PEDIDO\n"
+        f"📦 NUEVO PEDIDO\n\n"
         f"Cliente: {cliente}\n"
         f"💎 {paquete}\n"
         f"💰 {precio}\n"
@@ -137,7 +137,6 @@ button { margin-top:5px; }
 <button>Enviar</button>
 </form>
 {% endif %}
-
 </div>
 {% endif %}
 {% endfor %}
@@ -164,7 +163,8 @@ def webhook():
     try:
         msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
         telefono = msg["from"]
-        texto = msg.get("text", {}).get("body", "").lower()
+        texto = msg.get("text", {}).get("body", "")
+        texto_l = texto.lower()
 
         usuarios.setdefault(telefono, {"estado": "INICIO"})
         estado = usuarios[telefono]["estado"]
@@ -175,46 +175,128 @@ def webhook():
             return "EVENT_RECEIVED", 200
 
         if estado == "INICIO":
-            enviar(telefono,
+            enviar(
+                telefono,
                 "💎 Diamantes Free Fire\n\n"
-                "1️⃣ 100  – 💎 - $1.200\n"
-                "2️⃣ 310  – 💎 - $3.200\n"
-                "3️⃣ 520  – 💎 - $5.000\n"
-                "4️⃣ 1060 – 💎 - $9.800")
+                "1️⃣ 100  – $1.200\n"
+                "2️⃣ 310  – $3.200\n"
+                "3️⃣ 520  – $5.000\n"
+                "4️⃣ 1060 – $9.800"
+            )
             usuarios[telefono]["estado"] = "MENU"
 
-        elif estado == "MENU" and texto in PAQUETES:
-            p, pr = PAQUETES[texto]
-            usuarios[telefono].update({"estado":"ID","paquete":p,"precio":pr})
-            enviar(telefono, "📲 Enviá tu ID")
+        elif estado == "MENU" and texto_l in PAQUETES:
+            p, pr = PAQUETES[texto_l]
+            usuarios[telefono].update({"estado": "CONFIRMAR_PAQUETE", "paquete": p, "precio": pr})
+            enviar(
+                telefono,
+                f"💎 Paquete elegido:\n{p}\n💰 Precio: {pr}\n\n"
+                "1️⃣ Confirmar paquete\n"
+                "2️⃣ Volver al menú"
+            )
+
+        elif estado == "CONFIRMAR_PAQUETE":
+            if texto_l == "1":
+                usuarios[telefono]["estado"] = "ID"
+                enviar(telefono, "📲 Enviá tu ID del juego")
+            elif texto_l == "2":
+                usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
 
         elif estado == "ID":
-            usuarios[telefono].update({"estado":"CONFIRMAR","id_juego":texto})
-            enviar(telefono, "Confirmá tu ID escribiendo SI")
+            usuarios[telefono]["id_juego"] = texto
+            usuarios[telefono]["estado"] = "CONFIRMAR_ID"
+            enviar(
+                telefono,
+                f"🎮 Tu ID es:\n{text}\n\n"
+                "1️⃣ Confirmar ID\n"
+                "2️⃣ Volver al menú"
+            )
 
-        elif estado == "CONFIRMAR" and texto == "si":
-            usuarios[telefono]["estado"] = "COMPROBANTE"
-            enviar(telefono, "📎 Enviá el comprobante de pago realizado")
+        elif estado == "CONFIRMAR_ID":
+            if texto_l == "1":
+                usuarios[telefono]["estado"] = "RESUMEN"
+                enviar(
+                    telefono,
+                    f"📋 RESUMEN DEL PEDIDO\n\n"
+                    f"💎 {usuarios[telefono]['paquete']}\n"
+                    f"💰 {usuarios[telefono]['precio']}\n"
+                    f"🎮 ID: {usuarios[telefono]['id_juego']}\n\n"
+                    "1️⃣ Confirmar y pagar\n"
+                    "2️⃣ Volver al menú"
+                )
+            elif texto_l == "2":
+                usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
+
+        elif estado == "RESUMEN":
+            if texto_l == "1":
+                usuarios[telefono]["estado"] = "COMPROBANTE"
+                enviar(telefono, "💳 Realizá el pago y enviá el comprobante 📎")
+            elif texto_l == "2":
+                usuarios[telefono]["estado"] = "MENU"
+                enviar(
+                    telefono,
+                    "🔁 Menú\n\n"
+                    "1️⃣ 100  – $1.200\n"
+                    "2️⃣ 310  – $3.200\n"
+                    "3️⃣ 520  – $5.000\n"
+                    "4️⃣ 1060 – $9.800"
+                )
+            else:
+                enviar(telefono, "❌ Respondé 1 o 2")
 
         elif estado == "COMPROBANTE":
             tipo = msg.get("type")
-            media_id = msg.get(tipo, {}).get("id")
+            if tipo not in ["image", "document"]:
+                enviar(telefono, "❌ Enviá una imagen del comprobante")
+                return "EVENT_RECEIVED", 200
+
+            media_id = msg[tipo]["id"]
             pedido = {
                 "cliente": telefono,
                 "paquete": usuarios[telefono]["paquete"],
                 "precio": usuarios[telefono]["precio"],
                 "id_juego": usuarios[telefono]["id_juego"],
-                "tipo_comprobante": tipo,
-                "media_id": media_id
+                "media_id": media_id,
+                "tipo": tipo
             }
+
             guardar_pedido(pedido)
-            reenviar_a_personal(**pedido)
+            reenviar_a_personal(
+                telefono,
+                pedido["paquete"],
+                pedido["precio"],
+                pedido["id_juego"],
+                tipo,
+                media_id
+            )
+
             usuarios[telefono] = {
-                "estado":"HUMANO",
-                "comprobante":pedido,
-                "mensajes_humanos":[]
+                "estado": "HUMANO",
+                "comprobante": pedido,
+                "mensajes_humanos": []
             }
-            enviar(telefono, "✅ Comprobante recibido en un momento recibiras tu carga de 💎DIAMANTES💎")
+
+            enviar(telefono, "✅ Comprobante recibido. Un asesor continuará tu pedido 💎")
 
         guardar_usuarios()
 
@@ -247,6 +329,7 @@ def responder():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
 
 
 
