@@ -10,13 +10,13 @@ app = Flask(__name__)
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
-NUMERO_PERSONAL = "+543886046052"
+NUMERO_PERSONAL = "543886046052"  # SIN +
 
 PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
 
 PAQUETES = {
-    "1": ("100 diamantes", "$3400 ARS"),
+    "1": ("100 diamantes", "$1.200 ARS"),
     "2": ("310 diamantes", "$3.200 ARS"),
     "3": ("520 diamantes", "$5.000 ARS"),
     "4": ("1060 diamantes", "$9.800 ARS")
@@ -35,7 +35,7 @@ def guardar_usuarios():
 
 usuarios = cargar_usuarios()
 
-# ---------------- FUNCIONES ----------------
+# ---------------- ENVÍO WHATSAPP ----------------
 def enviar(telefono, texto):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -45,10 +45,30 @@ def enviar(telefono, texto):
     payload = {
         "messaging_product": "whatsapp",
         "to": telefono,
+        "type": "text",
         "text": {"body": texto}
     }
-    r = requests.post(url, json=payload, headers=headers)
-    print("📤 ENVÍO:", r.status_code, r.text)
+    requests.post(url, json=payload, headers=headers)
+
+def enviar_imagen(telefono, media_id):
+    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": telefono,
+        "type": "image",
+        "image": {"id": media_id}
+    }
+    requests.post(url, json=payload, headers=headers)
+
+def obtener_url_media(media_id):
+    url = f"https://graph.facebook.com/v18.0/{media_id}"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    r = requests.get(url, headers=headers)
+    return r.json().get("url")
 
 def guardar_pedido(pedido):
     pedidos = []
@@ -59,60 +79,65 @@ def guardar_pedido(pedido):
     with open(PEDIDOS_FILE, "w") as f:
         json.dump(pedidos, f, indent=4)
 
-def obtener_url_media(media_id):
-    url = f"https://graph.facebook.com/v18.0/{media_id}"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    r = requests.get(url, headers=headers)
-    if r.status_code == 200:
-        return r.json().get("url")
-    return None
-
-def reenviar_a_personal(telefono_cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None):
+def reenviar_a_personal(cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None):
     enviar(
         NUMERO_PERSONAL,
-        f"📦 Nuevo pedido\nCliente: {telefono_cliente}\n💎 {paquete}\n💰 {precio}\n🎮 ID: {id_juego}"
+        f"📦 NUEVO PEDIDO\n"
+        f"Cliente: {cliente}\n"
+        f"💎 {paquete}\n"
+        f"💰 {precio}\n"
+        f"🎮 ID: {id_juego}"
     )
     if media_id:
-        media_url = obtener_url_media(media_id)
-        if media_url:
-            enviar(NUMERO_PERSONAL, f"📎 Comprobante: {media_url}")
+        enviar_imagen(NUMERO_PERSONAL, media_id)
 
 # ---------------- PANEL HTML ----------------
 PANEL_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>Panel Modo Humano</title>
+<title>Panel Humano</title>
 <style>
 body { font-family: Arial; background:#f0f2f5; padding:20px; }
 .cliente { background:#fff; padding:15px; margin-bottom:20px; border-radius:12px; }
 .mensajes { max-height:200px; overflow:auto; background:#fafafa; padding:10px; border-radius:8px; }
-.mensaje-tu { color:#0d6efd; font-weight:bold; }
-img { max-width:200px; margin-top:10px; border-radius:8px; }
+button { margin-top:5px; }
 </style>
 </head>
 <body>
-<h2>Modo Humano</h2>
+<h2>Panel de Atención Humana</h2>
+
 {% for tel, data in usuarios.items() %}
-{% if data.estado == 'HUMANO' %}
+{% if data.estado in ['HUMANO','TOMADO'] %}
 <div class="cliente">
-<h3>{{ tel }}</h3>
+<h3>{{ tel }} - {{ data.estado }}</h3>
+
 <div class="mensajes">
 {% for m in data.get('mensajes_humanos', []) %}
-<div class="{{ 'mensaje-tu' if m.startswith('Tú:') else '' }}">{{ m }}</div>
+<div>{{ m }}</div>
 {% endfor %}
 </div>
 
 {% if data.get('comprobante') %}
 <p><strong>Comprobante:</strong></p>
-<img src="/media/{{ data.comprobante.media_id }}">
+<img src="/media/{{ data.comprobante.media_id }}" width="200">
 {% endif %}
 
+{% if data.estado == 'HUMANO' %}
+<form action="/tomar" method="post">
+<input type="hidden" name="telefono" value="{{ tel }}">
+<button>🧑‍💼 Tomar conversación</button>
+</form>
+{% endif %}
+
+{% if data.estado == 'TOMADO' %}
 <form action="/responder" method="post">
 <input type="hidden" name="telefono" value="{{ tel }}">
-<input type="text" name="mensaje" placeholder="Responder">
+<input name="mensaje" placeholder="Responder">
 <button>Enviar</button>
 </form>
+{% endif %}
+
 </div>
 {% endif %}
 {% endfor %}
@@ -123,14 +148,9 @@ img { max-width:200px; margin-top:10px; border-radius:8px; }
 # ---------------- MEDIA ----------------
 @app.route("/media/<media_id>")
 def media(media_id):
-    url = f"https://graph.facebook.com/v18.0/{media_id}"
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    r = requests.get(url, headers=headers)
-    if r.status_code != 200:
-        return "Error", 404
-    media_url = r.json().get("url")
-    media_r = requests.get(media_url, headers=headers)
-    return send_file(BytesIO(media_r.content), mimetype=media_r.headers.get("Content-Type"))
+    url = obtener_url_media(media_id)
+    r = requests.get(url, headers={"Authorization": f"Bearer {ACCESS_TOKEN}"})
+    return send_file(BytesIO(r.content), mimetype=r.headers.get("Content-Type"))
 
 # ---------------- WEBHOOK ----------------
 @app.route("/webhook", methods=["GET", "POST"])
@@ -144,65 +164,59 @@ def webhook():
     try:
         msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
         telefono = msg["from"]
-        texto = msg.get("text", {}).get("body", "").strip().lower()
+        texto = msg.get("text", {}).get("body", "").lower()
 
-        if telefono not in usuarios:
-            usuarios[telefono] = {"estado": "INICIO"}
-            guardar_usuarios()
-
+        usuarios.setdefault(telefono, {"estado": "INICIO"})
         estado = usuarios[telefono]["estado"]
+
+        if estado == "TOMADO":
+            usuarios[telefono].setdefault("mensajes_humanos", []).append(f"Cliente: {texto}")
+            guardar_usuarios()
+            return "EVENT_RECEIVED", 200
 
         if estado == "INICIO":
             enviar(telefono,
                 "💎 Diamantes Free Fire\n\n"
-                "1️⃣ 100 – $1.200\n"
+                "1️⃣ 100 – $51.200\n"
                 "2️⃣ 310 – $3.200\n"
                 "3️⃣ 520 – $5.000\n"
                 "4️⃣ 1060 – $9.800")
             usuarios[telefono]["estado"] = "MENU"
-            guardar_usuarios()
 
         elif estado == "MENU" and texto in PAQUETES:
-            paquete, precio = PAQUETES[texto]
-            usuarios[telefono].update({"estado": "ID", "paquete": paquete, "precio": precio})
-            guardar_usuarios()
-            enviar(telefono, "📲 Enviá tu ID de Free Fire")
+            p, pr = PAQUETES[texto]
+            usuarios[telefono].update({"estado":"ID","paquete":p,"precio":pr})
+            enviar(telefono, "📲 Enviá tu ID")
 
         elif estado == "ID":
-            usuarios[telefono].update({"estado": "CONFIRMAR", "id_juego": texto})
-            guardar_usuarios()
-            enviar(telefono, f"Confirmar pedido {usuarios[telefono]['paquete']} por {usuarios[telefono]['precio']}.\nEscribí SI")
+            usuarios[telefono].update({"estado":"CONFIRMAR","id_juego":texto})
+            enviar(telefono, "Confirmá escribiendo SI")
 
         elif estado == "CONFIRMAR" and texto == "si":
             usuarios[telefono]["estado"] = "COMPROBANTE"
-            guardar_usuarios()
             enviar(telefono, "📎 Enviá el comprobante")
 
         elif estado == "COMPROBANTE":
             tipo = msg.get("type")
-            media_id = msg.get(tipo, {}).get("id") if tipo in ["image", "document"] else None
-            if media_id:
-                pedido = {
-                    "cliente": telefono,
-                    "paquete": usuarios[telefono]["paquete"],
-                    "precio": usuarios[telefono]["precio"],
-                    "id_juego": usuarios[telefono]["id_juego"],
-                    "tipo_comprobante": tipo,
-                    "media_id": media_id
-                }
-                guardar_pedido(pedido)
-                usuarios[telefono].update({
-                    "estado": "HUMANO",
-                    "comprobante": pedido,
-                    "mensajes_humanos": []
-                })
-                guardar_usuarios()
-                reenviar_a_personal(**pedido)
-                enviar(telefono, "✅ Comprobante recibido. Te atendemos manualmente.")
+            media_id = msg.get(tipo, {}).get("id")
+            pedido = {
+                "cliente": telefono,
+                "paquete": usuarios[telefono]["paquete"],
+                "precio": usuarios[telefono]["precio"],
+                "id_juego": usuarios[telefono]["id_juego"],
+                "tipo_comprobante": tipo,
+                "media_id": media_id
+            }
+            guardar_pedido(pedido)
+            reenviar_a_personal(**pedido)
+            usuarios[telefono] = {
+                "estado":"HUMANO",
+                "comprobante":pedido,
+                "mensajes_humanos":[]
+            }
+            enviar(telefono, "✅ Comprobante recibido")
 
-        elif estado == "HUMANO":
-            usuarios[telefono].setdefault("mensajes_humanos", []).append(f"Cliente: {texto}")
-            guardar_usuarios()
+        guardar_usuarios()
 
     except Exception as e:
         print("ERROR:", e)
@@ -213,6 +227,13 @@ def webhook():
 @app.route("/panel")
 def panel():
     return render_template_string(PANEL_HTML, usuarios=usuarios)
+
+@app.route("/tomar", methods=["POST"])
+def tomar():
+    tel = request.form["telefono"]
+    usuarios[tel]["estado"] = "TOMADO"
+    guardar_usuarios()
+    return redirect("/panel")
 
 @app.route("/responder", methods=["POST"])
 def responder():
@@ -226,7 +247,6 @@ def responder():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
 
 
 
