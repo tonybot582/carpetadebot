@@ -1,26 +1,23 @@
 from flask import Flask, request, render_template_string, redirect, send_file
-import requests
-import json
-import os
+import requests, json, os, re
 from io import BytesIO
-import re
 
 app = Flask(__name__)
 
-# ---------------- CONFIGURACIÓN ----------------
+# ---------------- CONFIG ----------------
 VERIFY_TOKEN = "159412d596d0d2d06050a502883b08ca"
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = "919152181286061"
 NUMERO_PERSONAL = "543886046052"
 
-PEDIDOS_FILE = "pedidos.json"
 USUARIOS_FILE = "usuarios.json"
+PEDIDOS_FILE = "pedidos.json"
 
 PAQUETES = {
-    "1": ("100 diamantes", "$1.200 ARS"),
-    "2": ("310 diamantes", "$3.200 ARS"),
-    "3": ("520 diamantes", "$5.000 ARS"),
-    "4": ("1060 diamantes", "$9.800 ARS")
+    "100 diamantes": ("100 diamantes", "$1.200 ARS"),
+    "310 diamantes": ("310 diamantes", "$3.200 ARS"),
+    "520 diamantes": ("520 diamantes", "$5.000 ARS"),
+    "1060 diamantes": ("1060 diamantes", "$9.800 ARS")
 }
 
 # ---------------- PERSISTENCIA ----------------
@@ -36,30 +33,24 @@ def guardar_usuarios():
 
 usuarios = cargar_usuarios()
 
-# ---------------- WHATSAPP ----------------
-def enviar_texto(telefono, texto):
+# ---------------- WHATSAPP SEND ----------------
+def enviar_texto(tel, texto):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     payload = {
         "messaging_product": "whatsapp",
-        "to": telefono,
+        "to": tel,
         "type": "text",
         "text": {"body": texto}
     }
     requests.post(url, json=payload, headers=headers)
 
-def enviar_botones(telefono, texto, botones):
+def enviar_botones(tel, texto, botones):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     payload = {
         "messaging_product": "whatsapp",
-        "to": telefono,
+        "to": tel,
         "type": "interactive",
         "interactive": {
             "type": "button",
@@ -74,12 +65,12 @@ def enviar_botones(telefono, texto, botones):
     }
     requests.post(url, json=payload, headers=headers)
 
-def enviar_imagen(telefono, media_id):
+def enviar_imagen(tel, media_id):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     payload = {
         "messaging_product": "whatsapp",
-        "to": telefono,
+        "to": tel,
         "type": "image",
         "image": {"id": media_id}
     }
@@ -96,90 +87,88 @@ def webhook():
     data = request.get_json()
 
     try:
-        msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
-        telefono = msg["from"]
+        value = data["entry"][0]["changes"][0]["value"]
+        if "messages" not in value:
+            return "EVENT_RECEIVED", 200
+
+        msg = value["messages"][0]
+        tel = msg["from"]
 
         texto = ""
+
         if msg["type"] == "text":
             texto = msg["text"]["body"].strip()
-        elif msg["type"] == "button":
-            texto = msg["button"]["text"]
 
-        usuarios.setdefault(telefono, {"estado": "INICIO"})
-        estado = usuarios[telefono]["estado"]
+        elif msg["type"] == "interactive":
+            if msg["interactive"]["type"] == "button_reply":
+                texto = msg["interactive"]["button_reply"]["title"]
 
-        # ---- VOLVER AL MENU GLOBAL ----
-        if texto.lower() in ["menu", "volver al menú", "volver al menu", "🏠 Volver al menú"]:
-            usuarios[telefono] = {"estado": "MENU"}
+        usuarios.setdefault(tel, {"estado": "INICIO"})
+        estado = usuarios[tel]["estado"]
+
+        # -------- VOLVER AL MENU GLOBAL --------
+        if texto.lower() in ["menu", "volver al menú", "volver al menu"]:
+            usuarios[tel] = {"estado": "MENU"}
             enviar_botones(
-                telefono,
+                tel,
                 "💎 Elegí un paquete:",
-                ["1️⃣ 100", "2️⃣ 310", "3️⃣ 520", "4️⃣ 1060"]
+                list(PAQUETES.keys())
             )
             guardar_usuarios()
             return "EVENT_RECEIVED", 200
 
-        # ---- INICIO ----
+        # -------- INICIO --------
         if estado == "INICIO":
-            usuarios[telefono]["estado"] = "MENU"
+            usuarios[tel]["estado"] = "MENU"
             enviar_botones(
-                telefono,
+                tel,
                 "💎 Elegí un paquete:",
-                ["1️⃣ 100", "2️⃣ 310", "3️⃣ 520", "4️⃣ 1060"]
+                list(PAQUETES.keys())
             )
 
-        # ---- MENU ----
-        elif estado == "MENU" and texto[0] in PAQUETES:
-            p, pr = PAQUETES[texto[0]]
-            usuarios[telefono].update({
+        # -------- MENU --------
+        elif estado == "MENU" and texto in PAQUETES:
+            p, pr = PAQUETES[texto]
+            usuarios[tel].update({
                 "estado": "ID",
                 "paquete": p,
                 "precio": pr
             })
-            enviar_texto(
-                telefono,
-                "📲 Enviá tu ID del juego (solo números)"
-            )
+            enviar_texto(tel, "📲 Enviá tu ID del juego (solo números)")
 
-        # ---- ID ----
+        # -------- ID --------
         elif estado == "ID":
             if not re.fullmatch(r"\d{6,15}", texto):
-                enviar_texto(
-                    telefono,
-                    "❌ El ID debe ser SOLO NÚMEROS.\nVolvé a enviarlo correctamente."
-                )
+                enviar_texto(tel, "❌ El ID debe ser SOLO números.\nReenviá tu ID.")
                 return "EVENT_RECEIVED", 200
 
-            usuarios[telefono]["id_juego"] = texto
-            usuarios[telefono]["estado"] = "CONFIRMAR_ID"
+            usuarios[tel]["id_juego"] = texto
+            usuarios[tel]["estado"] = "CONFIRMAR_ID"
 
             enviar_botones(
-                telefono,
-                f"🎮 ID ingresado:\n👉 {texto}",
-                ["✅ Confirmar ID", "🏠 Volver al menú"]
+                tel,
+                f"🎮 ID ingresado:\n{text}",
+                ["Confirmar ID", "Volver al menú"]
             )
 
-        # ---- CONFIRMAR ID ----
+        # -------- CONFIRMAR ID --------
         elif estado == "CONFIRMAR_ID":
-            if "Confirmar" in texto:
-                usuarios[telefono]["estado"] = "RESUMEN"
+            if texto == "Confirmar ID":
+                usuarios[tel]["estado"] = "RESUMEN"
                 enviar_botones(
-                    telefono,
+                    tel,
                     f"📋 RESUMEN\n\n"
-                    f"💎 {usuarios[telefono]['paquete']}\n"
-                    f"💰 {usuarios[telefono]['precio']}\n"
-                    f"🎮 ID: {usuarios[telefono]['id_juego']}",
-                    ["💳 Pagar", "🏠 Volver al menú"]
+                    f"💎 {usuarios[tel]['paquete']}\n"
+                    f"💰 {usuarios[tel]['precio']}\n"
+                    f"🎮 ID: {usuarios[tel]['id_juego']}",
+                    ["Confirmar y pagar", "Volver al menú"]
                 )
 
-        # ---- RESUMEN ----
+        # -------- RESUMEN --------
         elif estado == "RESUMEN":
-            if "Pagar" in texto:
-                usuarios[telefono]["estado"] = "COMPROBANTE"
-                enviar_texto(
-                    telefono,
-                    "💳 Realizá el pago y enviá el comprobante 📎"
-                )
+            if texto == "Confirmar y pagar":
+                usuarios[tel]["estado"] = "COMPROBANTE"
+                enviar_texto(tel, "💳 Realizá el pago y enviá el comprobante 📎")
 
         guardar_usuarios()
 
@@ -191,4 +180,3 @@ def webhook():
 # ---------------- RUN ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
