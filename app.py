@@ -17,7 +17,7 @@ USUARIOS_FILE = "usuarios.json"
 
 PAQUETES = {
     "1": ("100 diamantes", "$5.200 ARS"),
-    "2": ("310 diamantes", "$3.200 ARS"),
+    "2": ("310 diamantes", "$88.200 ARS"),
     "3": ("520 diamantes", "$5.000 ARS"),
     "4": ("1060 diamantes", "$9.800 ARS")
 }
