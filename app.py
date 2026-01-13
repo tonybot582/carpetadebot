@@ -25,9 +25,9 @@ PAQUETES = {
 
 # 👉 ALIAS DE PAGO (NUEVO)
 ALIAS_PAGO = [
-    "diamantes.ff",
-    "freefire.pay",
-    "ventas.ff"
+    "isathony",
+    "marco.ul",
+    "tonyfer11"
 ]
 
 # ---------------- PERSISTENCIA ----------------
