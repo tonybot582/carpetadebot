@@ -242,7 +242,7 @@ def webhook():
                     telefono,
                     "💳 *Datos para el pago*\n\n"
                     f"👉 Alias: *{alias}*\n\n"
-                    "Luego enviá el comprobante 📎"
+                    "Una vez hecho el pago, enviá la foto del comprobante 📎"
                 )
 
         elif estado == "COMPROBANTE":
