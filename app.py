@@ -2,6 +2,7 @@ from flask import Flask, request, render_template_string, redirect, send_file
 import requests
 import json
 import os
+import random
 from io import BytesIO
 
 app = Flask(__name__)
@@ -21,6 +22,13 @@ PAQUETES = {
     "3": ("520 diamantes", "$5.000 ARS"),
     "4": ("1060 diamantes", "$9.800 ARS")
 }
+
+# 👉 ALIAS DE PAGO (NUEVO)
+ALIAS_PAGO = [
+    "diamantes.ff",
+    "freefire.pay",
+    "ventas.ff"
+]
 
 # ---------------- PERSISTENCIA ----------------
 def cargar_usuarios():
@@ -79,14 +87,15 @@ def guardar_pedido(pedido):
     with open(PEDIDOS_FILE, "w") as f:
         json.dump(pedidos, f, indent=4)
 
-def reenviar_a_personal(cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None):
+def reenviar_a_personal(cliente, paquete, precio, id_juego, tipo_comprobante, media_id=None, alias_pago=None):
     enviar(
         NUMERO_PERSONAL,
         f"📦 NUEVO PEDIDO\n\n"
         f"Cliente: {cliente}\n"
         f"💎 {paquete}\n"
         f"💰 {precio}\n"
-        f"🎮 ID: {id_juego}"
+        f"🎮 ID: {id_juego}\n"
+        f"🏦 Alias: {alias_pago}"
     )
     if media_id:
         enviar_imagen(NUMERO_PERSONAL, media_id)
@@ -164,8 +173,7 @@ def webhook():
         msg = data["entry"][0]["changes"][0]["value"]["messages"][0]
         telefono = msg["from"]
 
-        texto = msg.get("text", {}).get("body", "")
-        texto = texto.strip()
+        texto = msg.get("text", {}).get("body", "").strip()
         texto_l = texto.lower()
 
         usuarios.setdefault(telefono, {"estado": "INICIO"})
@@ -203,87 +211,52 @@ def webhook():
                 enviar(telefono, "📲 Enviá tu ID del juego")
             elif texto_l == "2":
                 usuarios[telefono]["estado"] = "MENU"
-                enviar(
-                    telefono,
-                    "🔁 Menú\n\n"
-                    "1️⃣ 100  – $1.200\n"
-                    "2️⃣ 310  – $3.200\n"
-                    "3️⃣ 520  – $5.000\n"
-                    "4️⃣ 1060 – $9.800"
-                )
+                enviar(telefono, "🔁 Menú\n\n1️⃣ 100\n2️⃣ 310\n3️⃣ 520\n4️⃣ 1060")
             else:
                 enviar(telefono, "❌ Respondé 1 o 2")
 
         elif estado == "ID":
-            if not texto:
-                enviar(telefono, "❌ El ID no puede estar vacío. Enviá tu ID del juego")
-                return "EVENT_RECEIVED", 200
-
             usuarios[telefono]["id_juego"] = texto
             usuarios[telefono]["estado"] = "CONFIRMAR_ID"
-            enviar(
-                telefono,
-                f"🎮 Tu ID es:\n👉 {texto}\n\n"
-                "1️⃣ Confirmar ID\n"
-                "2️⃣ Volver al menú"
-            )
+            enviar(telefono, f"🎮 Tu ID es:\n👉 {texto}\n\n1️⃣ Confirmar ID\n2️⃣ Volver")
 
         elif estado == "CONFIRMAR_ID":
             if texto_l == "1":
                 usuarios[telefono]["estado"] = "RESUMEN"
                 enviar(
                     telefono,
-                    f"📋 RESUMEN DEL PEDIDO\n\n"
-                    f"💎 {usuarios[telefono]['paquete']}\n"
+                    f"📋 RESUMEN\n\n💎 {usuarios[telefono]['paquete']}\n"
                     f"💰 {usuarios[telefono]['precio']}\n"
-                    f"🎮 ID: {usuarios[telefono]['id_juego']}\n\n"
-                    "1️⃣ Confirmar y pagar\n"
-                    "2️⃣ Volver al menú"
-                )
-            elif texto_l == "2":
-                usuarios[telefono]["estado"] = "MENU"
-                enviar(
-                    telefono,
-                    "🔁 Menú\n\n"
-                    "1️⃣ 100  – $1.200\n"
-                    "2️⃣ 310  – $3.200\n"
-                    "3️⃣ 520  – $5.000\n"
-                    "4️⃣ 1060 – $9.800"
+                    f"🎮 {usuarios[telefono]['id_juego']}\n\n"
+                    "1️⃣ Confirmar y pagar\n2️⃣ Volver"
                 )
             else:
-                enviar(telefono, "❌ Respondé 1 o 2")
+                usuarios[telefono]["estado"] = "MENU"
 
         elif estado == "RESUMEN":
             if texto_l == "1":
+                alias = random.choice(ALIAS_PAGO)
+                usuarios[telefono]["alias_pago"] = alias
                 usuarios[telefono]["estado"] = "COMPROBANTE"
-                enviar(telefono, "💳 Realizá el pago y enviá el comprobante 📎")
-            elif texto_l == "2":
-                usuarios[telefono]["estado"] = "MENU"
                 enviar(
                     telefono,
-                    "🔁 Menú\n\n"
-                    "1️⃣ 100  – $1.200\n"
-                    "2️⃣ 310  – $3.200\n"
-                    "3️⃣ 520  – $5.000\n"
-                    "4️⃣ 1060 – $9.800"
+                    "💳 *Datos para el pago*\n\n"
+                    f"👉 Alias: *{alias}*\n\n"
+                    "Luego enviá el comprobante 📎"
                 )
-            else:
-                enviar(telefono, "❌ Respondé 1 o 2")
 
         elif estado == "COMPROBANTE":
             tipo = msg.get("type")
-            if tipo not in ["image", "document"]:
-                enviar(telefono, "❌ Enviá una imagen del comprobante")
-                return "EVENT_RECEIVED", 200
-
             media_id = msg[tipo]["id"]
+
             pedido = {
                 "cliente": telefono,
                 "paquete": usuarios[telefono]["paquete"],
                 "precio": usuarios[telefono]["precio"],
                 "id_juego": usuarios[telefono]["id_juego"],
                 "media_id": media_id,
-                "tipo": tipo
+                "tipo": tipo,
+                "alias_pago": usuarios[telefono].get("alias_pago")
             }
 
             guardar_pedido(pedido)
@@ -293,7 +266,8 @@ def webhook():
                 pedido["precio"],
                 pedido["id_juego"],
                 tipo,
-                media_id
+                media_id,
+                pedido["alias_pago"]
             )
 
             usuarios[telefono] = {
